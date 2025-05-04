@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using System.Diagnostics;
 using Biuro_Podróży.AppHost.Models;
+using System.Reflection.PortableExecutable;
 
 namespace Biuro_Podróży.AppHost.Sevices;
 
@@ -100,11 +101,14 @@ public class DataBaseService(IConfiguration config) : IDataBaseService {
     }
 
     public async Task<ClientModel> CreateClientAsync(ClientCreateDTO client) {
+
         await using var connection = new SqlConnection(connectionString);
-        const string sql = "insert into Client (FirstName, LastName, Email, Telephone, Pesel) " +
+
+        const string sqlQuery = "insert into Client (FirstName, LastName, Email, Telephone, Pesel) " +
             "values (@FirstName, @LastName, @Email, @Telephone,@Pesel); Select scope_identity()";
 
-        await using var command = new SqlCommand(sql, connection);
+
+        await using var command = new SqlCommand(sqlQuery, connection);
         command.Parameters.AddWithValue("@FirstName", client.FirstName);
         command.Parameters.AddWithValue("@LastName", client.LastName);
         command.Parameters.AddWithValue("@Email", client.Email);
@@ -126,23 +130,73 @@ public class DataBaseService(IConfiguration config) : IDataBaseService {
 
     public async Task RegisterClientTrip(int clientID, int tripID) {
         await using var connection = new SqlConnection(connectionString);
-        const string sql = "insert into Client_Trip (IdClient, IdTrip, RegisteredAt, PaymentDate) " +
-            "values (@IdClient, @IdTrip, @RegisteredAt,null )";
-        await using var command = new SqlCommand(sql, connection);
-        command.Parameters.AddWithValue("@IdClient", clientID);
-        command.Parameters.AddWithValue("@IdTrip", tripID);
-        command.Parameters.AddWithValue("@RegisteredAt", int.Parse(DateTime.Today.ToString("yyyyMMdd")));
+
+        string sqlQuery = "SELECT 1 FROM Client WHERE IdClient = @idClient";
+        await using SqlCommand commandA = new SqlCommand(sqlQuery, connection);
+        commandA.Parameters.AddWithValue("@idClient", clientID);
+        
         await connection.OpenAsync();
 
+        await using (var reader = await commandA.ExecuteReaderAsync()) {
+            if (!reader.HasRows)
+                throw new NotFoundException($"Client with id: {clientID} does not exist");
+        }
+
+        
+
+        sqlQuery = "SELECT MaxPeople FROM Trip WHERE IdTrip = @idTrip";
+        await using SqlCommand commandB = new SqlCommand(sqlQuery, connection);
+        commandB.Parameters.AddWithValue("@idTrip", tripID);
+
+        int maxPeople = 0;
+
+        await using (var reader = await commandB.ExecuteReaderAsync()) {
+            if (!reader.HasRows)
+                throw new NotFoundException($"Trip with id: {tripID} does not exist");
+
+            await reader.ReadAsync();
+            maxPeople = reader.GetInt32(0);
+        }
+
+        sqlQuery = "SELECT COUNT(Trip.IdTrip) FROM Trip INNER JOIN Client_Trip ON Trip.IdTrip = Client_Trip.IdTrip WHERE Trip.IdTrip = @idTrip";
+        await using SqlCommand commandC = new SqlCommand(sqlQuery, connection);
+        commandC.Parameters.AddWithValue("@idTrip", tripID);
+
+        int peopleCount = Convert.ToInt32(await commandC.ExecuteScalarAsync());
+        
+        if(peopleCount>=maxPeople)
+            throw new NotFoundException($"Trip with id: {tripID} has already reached the limit of participants: {peopleCount}");
+
+        sqlQuery = "insert into Client_Trip (IdClient, IdTrip, RegisteredAt, PaymentDate) " +
+            "values (@IdClient, @IdTrip, @RegisteredAt,null )";
+
+        await using var commandD = new SqlCommand(sqlQuery, connection);
+        commandD.Parameters.AddWithValue("@IdClient", clientID);
+        commandD.Parameters.AddWithValue("@IdTrip", tripID);
+        commandD.Parameters.AddWithValue("@RegisteredAt", int.Parse(DateTime.Today.ToString("yyyyMMdd")));
+
+        await commandD.ExecuteNonQueryAsync();
     }
 
     public async Task RemoveRegistresionForTrip(int clientID, int tripID) {
+
         await using var connection = new SqlConnection(connectionString);
-        const string sql = "DELETE FROM Client_Trip WHERE IdClient = @IdClient and IdTrip = @IdTrip";
-        await using var command = new SqlCommand(sql, connection);
-        command.Parameters.AddWithValue("@IdClient", clientID);
-        command.Parameters.AddWithValue("@IdTrip", tripID);
         await connection.OpenAsync();
+        string sql = "SELECT COUNT(IdClient) from client_trip WHERE IdClient = @IdClient and IdTrip = @IdTrip";
+        await using var commandA = new SqlCommand(sql, connection);
+        commandA.Parameters.AddWithValue("@IdClient", clientID);
+        commandA.Parameters.AddWithValue("@IdTrip", tripID);
+
+        await using (var reader = await commandA.ExecuteReaderAsync()) {
+            if (!reader.HasRows)
+                throw new NotFoundException($"Registration of client with id: {clientID} to trip with id: {tripID} does not exist");
+        }
+
+        sql = "DELETE FROM Client_Trip WHERE IdClient = @IdClient and IdTrip = @IdTrip";
+        await using var commandB = new SqlCommand(sql, connection);
+        commandB.Parameters.AddWithValue("@IdClient", clientID);
+        commandB.Parameters.AddWithValue("@IdTrip", tripID);
+        await commandB.ExecuteNonQueryAsync();
     }
 
     public async Task<IEnumerable<ClientGetDTO>> GetAllClients() {

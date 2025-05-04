@@ -34,4 +34,22 @@ public class ClientsController(IDataBaseService service) : ControllerBase
             return NotFound(e.Message);
         }
     }
+    [HttpPut("{clientID}/trips/{tripID}")]
+    public async Task<IActionResult> RegisterClientToTrip([FromRoute] int clientID, [FromRoute]int tripID) {
+        try {
+            await service.RegisterClientTrip(clientID, tripID);
+            return NoContent();
+        } catch (NotFoundException e) {
+            return NotFound(e.Message);
+        }
+    }
+    [HttpDelete("{clientID}/trips/{tripID}")]
+    public async Task<IActionResult> RemoveRegistration([FromRoute] int clientID, [FromRoute] int tripID) {
+        try {
+            await service.RemoveRegistresionForTrip(clientID, tripID);
+            return NoContent();
+        } catch (NotFoundException e) {
+            return NotFound(e.Message);
+        }
+    }
 }
